@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Announcements — Unify Hub</title>
+<link rel="stylesheet" href="/theme.css">
+</head>
+<body>
+<div class="app-shell" id="app-shell"></div>
+<script src="/js/app.js"></script>
+<script>
+(async function () {
+  const user = await requireAuth("/announcements.html");
+  if (!user) return;
+  const isAdmin = user.role === "admin";
+  const main = document.getElementById("main-content");
+
+  let dash;
+  async function load() { dash = await apiFetch("/dashboard"); render(); }
+
+  function audienceLabel(a) {
+    if (a.audience === "everyone") return "Everyone";
+    const teamId = a.audience.replace("team-", "");
+    const t = dash.teams.find(tm => tm.id === teamId);
+    return t ? t.name + " team" : a.audience;
+  }
+
+  function card(a) {
+    return `<div class="card" style="margin-bottom:12px;">
+      <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
+        <div style="min-width:0;">
+          <div style="font-weight:700;font-size:16px;display:flex;align-items:center;gap:8px;">${escapeHtml(a.title)} ${a.priority === "important" ? '<span class="badge badge-important">Important</span>' : ""}</div>
+          <div class="muted" style="font-size:12px;margin:4px 0 8px;">${fmtDateTime(a.created_at)} · ${audienceLabel(a)}</div>
+          <div style="font-size:14px;">${escapeHtml(a.body)}</div>
+        </div>
+        ${isAdmin ? `<button class="btn btn-outline btn-sm" data-delete="${a.id}">Delete</button>` : ""}
+      </div>
+    </div>`;
+  }
+
+  function render() {
+    const items = dash.announcements;
+    main.innerHTML = `
+      <div class="page-header">
+        <h1>Announcements</h1>
+        ${isAdmin ? `<button class="btn" id="new-btn">+ New announcement</button>` : ""}
+      </div>
+      ${items.length ? items.map(card).join("") : `<div class="empty-state">No announcements yet.</div>`}
+    `;
+    document.getElementById("new-btn")?.addEventListener("click", openCreateModal);
+    main.querySelectorAll("[data-delete]").forEach(b => b.addEventListener("click", () => remove(b.dataset.delete)));
+  }
+
+  async function remove(id) {
+    if (!confirm("Delete this announcement?")) return;
+    try { await apiFetch("/announcements/remove", { method: "POST", body: { id } }); toast("Deleted"); await load(); }
+    catch (e) { toast(e.message, true); }
+  }
+
+  function openCreateModal() {
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop";
+    backdrop.innerHTML = `<div class="modal">
+      <h2>New announcement</h2>
+      <form id="a-form">
+        <div class="field"><label>Title</label><input class="input" name="title" required></div>
+        <div class="field"><label>Body</label><textarea class="input" name="body" rows="4" required></textarea></div>
+        <div class="grid grid-2">
+          <div class="field"><label>Priority</label><select class="input" name="priority"><option value="normal">Normal</option><option value="important">Important</option></select></div>
+          <div class="field"><label>Audience</label><select class="input" name="audience"><option value="everyone">Everyone</option>${dash.teams.map(t => `<option value="team-${t.id}">${escapeHtml(t.name)}</option>`).join("")}</select></div>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
+          <button type="button" class="btn btn-outline" id="cancel-btn">Cancel</button>
+          <button type="submit" class="btn">Publish</button>
+        </div>
+      </form>
+    </div>`;
+    document.body.appendChild(backdrop);
+    backdrop.querySelector("#cancel-btn").addEventListener("click", () => backdrop.remove());
+    backdrop.addEventListener("click", (e) => { if (e.target === backdrop) backdrop.remove(); });
+    backdrop.querySelector("#a-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      try { await apiFetch("/announcements/create", { method: "POST", body: { title: fd.get("title"), body: fd.get("body"), priority: fd.get("priority"), audience: fd.get("audience") } }); toast("Published"); backdrop.remove(); await load(); }
+      catch (err) { toast(err.message, true); }
+    });
+  }
+
+  await load();
+})();
+</script>
+</body>
+</html>

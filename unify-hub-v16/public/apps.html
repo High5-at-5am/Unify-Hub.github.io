@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Apps \u2014 Unify Hub</title>
+<link rel="stylesheet" href="/theme.css">
+<style>
+  .app-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; }
+  .app-tile {
+    display: flex; flex-direction: column; gap: 8px; padding: 18px;
+    background: #fff; border: 1px solid var(--line); border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm); text-decoration: none; color: var(--ink);
+    transition: transform 0.12s ease, box-shadow 0.12s ease; position: relative;
+  }
+  .app-tile:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); text-decoration: none; }
+  .app-tile .icon { font-size: 26px; }
+  .app-tile .name { font-weight: 800; font-size: 15px; }
+  .app-tile .desc { font-size: 12px; color: var(--ink-soft); }
+  .app-tile .edit-controls { position: absolute; top: 10px; right: 10px; display: flex; gap: 4px; }
+  .app-tile .edit-controls button { background: rgba(255,255,255,0.9); border: 1px solid var(--line); border-radius: 6px; width: 24px; height: 24px; font-size: 11px; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="app-shell" id="app-shell"></div>
+<script src="/js/app.js"></script>
+<script>
+(async function () {
+  const user = await requireAuth("/apps.html");
+  if (!user) return;
+  const isAdmin = user.role === "admin";
+  const main = document.getElementById("main-content");
+
+  let apps = [];
+  async function load() { ({ apps } = await apiFetch("/apps/list")); render(); }
+
+  function tile(a) {
+    return `<div style="position:relative;">
+      <a class="app-tile" href="${a.url}" target="_blank" rel="noopener">
+        <span class="icon">${a.icon ? escapeHtml(a.icon) : "\ud83d\udd17"}</span>
+        <span class="name">${escapeHtml(a.name)}</span>
+        ${a.description ? `<span class="desc">${escapeHtml(a.description)}</span>` : ""}
+      </a>
+      ${isAdmin ? `<div class="edit-controls">
+        <button data-edit="${a.id}" title="Edit">\u270e</button>
+        <button data-delete="${a.id}" title="Remove">\u2715</button>
+      </div>` : ""}
+    </div>`;
+  }
+
+  function render() {
+    main.innerHTML = `
+      <div class="page-header">
+        <h1>Apps</h1>
+        ${isAdmin ? `<button class="btn" id="new-btn">+ Add app</button>` : ""}
+      </div>
+      ${apps.length ? `<div class="app-grid">${apps.map(tile).join("")}</div>` : `<div class="empty-state">No apps linked yet.${isAdmin ? " Click \u201c+ Add app\u201d to add one." : ""}</div>`}
+    `;
+    document.getElementById("new-btn")?.addEventListener("click", () => openModal(null));
+    main.querySelectorAll("[data-edit]").forEach(b => b.addEventListener("click", (e) => {
+      e.preventDefault();
+      openModal(apps.find(a => a.id === b.dataset.edit));
+    }));
+    main.querySelectorAll("[data-delete]").forEach(b => b.addEventListener("click", (e) => {
+      e.preventDefault();
+      removeApp(b.dataset.delete);
+    }));
+  }
+
+  async function removeApp(id) {
+    if (!confirm("Remove this app link?")) return;
+    try { await apiFetch("/apps/remove", { method: "POST", body: { id } }); toast("Removed"); await load(); }
+    catch (e) { toast(e.message, true); }
+  }
+
+  function openModal(existing) {
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop";
+    backdrop.innerHTML = `<div class="modal">
+      <h2>${existing ? "Edit app" : "Add app"}</h2>
+      <form id="app-form">
+        <div class="field"><label>Name</label><input class="input" name="name" value="${existing ? escapeHtml(existing.name) : ""}" required></div>
+        <div class="field"><label>URL</label><input class="input" name="url" placeholder="https://example.com" value="${existing ? escapeHtml(existing.url) : ""}" required></div>
+        <div class="field"><label>Icon (optional emoji)</label><input class="input" name="icon" placeholder="\ud83d\udcc1" maxlength="4" value="${existing ? escapeHtml(existing.icon || "") : ""}"></div>
+        <div class="field"><label>Description (optional)</label><input class="input" name="description" value="${existing ? escapeHtml(existing.description || "") : ""}"></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
+          <button type="button" class="btn btn-outline" id="cancel-btn">Cancel</button>
+          <button type="submit" class="btn">${existing ? "Save" : "Add app"}</button>
+        </div>
+      </form>
+    </div>`;
+    document.body.appendChild(backdrop);
+    backdrop.querySelector("#cancel-btn").addEventListener("click", () => backdrop.remove());
+    backdrop.addEventListener("click", (e) => { if (e.target === backdrop) backdrop.remove(); });
+    backdrop.querySelector("#app-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const body = { name: fd.get("name"), url: fd.get("url"), icon: fd.get("icon"), description: fd.get("description") };
+      try {
+        if (existing) { body.id = existing.id; await apiFetch("/apps/update", { method: "POST", body }); toast("Saved"); }
+        else { await apiFetch("/apps/create", { method: "POST", body }); toast("App added"); }
+        backdrop.remove();
+        await load();
+      } catch (err) { toast(err.message, true); }
+    });
+  }
+
+  await load();
+})();
+</script>
+</body>
+</html>

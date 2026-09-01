@@ -1,0 +1,1 @@
+ALTER TABLE organization_settings ADD COLUMN primary_color TEXT NOT NULL DEFAULT '#f06b4e';

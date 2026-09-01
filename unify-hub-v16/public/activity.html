@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Activity — Unify Hub</title>
+<link rel="stylesheet" href="/theme.css">
+</head>
+<body>
+<div class="app-shell" id="app-shell"></div>
+<script src="/js/app.js"></script>
+<script>
+(async function () {
+  const user = await requireAuth("/activity.html");
+  if (!user) return;
+  const main = document.getElementById("main-content");
+  if (!requireAdminOrRedirect(user)) return;
+
+  let logs = [];
+  try { ({ logs } = await apiFetch("/audit/list")); } catch (e) { toast(e.message, true); }
+
+  function row(l) {
+    return `<div class="list-row">
+      <div>
+        <div><strong>${escapeHtml(l.actor_name || "System")}</strong> ${escapeHtml(l.action)} ${escapeHtml(l.entity_type)}${l.details ? ' "' + escapeHtml(l.details) + '"' : ""}</div>
+        <div class="muted" style="font-size:12px;">${fmtDateTime(l.created_at)}</div>
+      </div>
+    </div>`;
+  }
+
+  main.innerHTML = `
+    <div class="page-header"><h1>Activity log</h1></div>
+    <p class="muted" style="margin-top:-14px;">Who changed what, and when — the last 100 actions.</p>
+    <div class="card">${logs.length ? logs.map(row).join("") : `<div class="empty-state">No activity yet.</div>`}</div>
+  `;
+})();
+</script>
+</body>
+</html>

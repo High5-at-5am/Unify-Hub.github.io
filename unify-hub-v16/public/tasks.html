@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tasks \u2014 Unify Hub</title>
+<link rel="stylesheet" href="/theme.css">
+</head>
+<body>
+<div class="app-shell" id="app-shell"></div>
+<script src="/js/app.js"></script>
+<script>
+(async function () {
+  const user = await requireAuth("/tasks.html");
+  if (!user) return;
+  const isAdmin = user.role === "admin";
+  const main = document.getElementById("main-content");
+
+  let dash, teams = [], members = [];
+  let filters = { team: "", person: "", status: "" };
+  const expanded = new Set();
+
+  async function load() {
+    dash = await apiFetch("/dashboard");
+    teams = dash.teams;
+    members = dash.members;
+    render();
+  }
+
+  function statusBtns(t) {
+    let html = "";
+    if (t.status === "not_started") html += `<button class="btn btn-sm" data-start="${t.id}">Start</button>`;
+    if (t.status === "in_progress") html += `<button class="btn btn-sm" data-complete="${t.id}">Mark complete</button>`;
+    if (t.status === "completed") html += `<span class="badge badge-completed">Done</span>`;
+    return html;
+  }
+
+  function assigneeLabel(t) {
+    if (t.assigned_user_id) return members.find(m => m.id === t.assigned_user_id)?.name || "Member";
+    if (t.assigned_team_id) return (teams.find(tm => tm.id === t.assigned_team_id)?.name || "Team") + " team";
+    return "Everyone";
+  }
+
+  function taskCard(t) {
+    const overdueFlag = isOverdue(t.due_at, t.status);
+    const isExpanded = expanded.has(t.id);
+    return `<div class="card" style="margin-bottom:12px;">
+      <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
+        <div style="min-width:0;">
+          <div style="font-weight:700;font-size:16px;">${escapeHtml(t.title)}</div>
+          <div class="muted" style="font-size:13px;margin:4px 0 8px;">${escapeHtml(t.description || "")}</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <span class="badge badge-${t.priority}">${t.priority}</span>
+            <span class="badge badge-${t.status}">${t.status.replace("_"," ")}</span>
+            <span class="tag-pill">${escapeHtml(assigneeLabel(t))}</span>
+            ${t.due_at ? `<span class="tag-pill" style="${overdueFlag ? "color:var(--brick);" : ""}">${overdueFlag ? "Overdue \u00b7 " : "Due "}${fmtDateTime(t.due_at)}</span>` : ""}
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;flex-shrink:0;">
+          ${statusBtns(t)}
+          <button class="btn btn-outline btn-sm" data-toggle-details="${t.id}">${isExpanded ? "Hide details" : "Comments & files"}</button>
+          ${isAdmin ? `<button class="btn btn-outline btn-sm" data-delete-task="${t.id}">Delete</button>` : ""}
+        </div>
+      </div>
+      <div id="details-${t.id}" style="display:${isExpanded ? "block" : "none"};margin-top:14px;border-top:1px solid var(--line);padding-top:14px;"></div>
+    </div>`;
+  }
+
+  function render() {
+    const filtered = dash.tasks.filter(t => {
+      if (filters.team && t.assigned_team_id !== filters.team) return false;
+      if (filters.person && t.assigned_user_id !== filters.person) return false;
+      if (filters.status && t.status !== filters.status) return false;
+      return true;
+    });
+    const overdueCount = dash.tasks.filter(t => isOverdue(t.due_at, t.status)).length;
+
+    main.innerHTML = `
+      <div class="page-header">
+        <h1>Tasks</h1>
+        ${isAdmin ? `<button class="btn" id="new-task-btn">+ New task</button>` : ""}
+      </div>
+      ${overdueCount ? `<div class="card" style="border-color:var(--brick);background:rgba(168,91,79,0.06);margin-bottom:16px;color:var(--brick);font-weight:700;">${overdueCount} overdue task${overdueCount === 1 ? "" : "s"}</div>` : ""}
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;">
+        <select class="input" id="filter-team" style="max-width:180px;"><option value="">All teams</option>${teams.map(t => `<option value="${t.id}" ${filters.team===t.id?"selected":""}>${escapeHtml(t.name)}</option>`).join("")}</select>
+        ${isAdmin ? `<select class="input" id="filter-person" style="max-width:180px;"><option value="">All people</option>${members.map(m => `<option value="${m.id}" ${filters.person===m.id?"selected":""}>${escapeHtml(m.name)}</option>`).join("")}</select>` : ""}
+        <select class="input" id="filter-status" style="max-width:160px;">
+          <option value="">All statuses</option>
+          <option value="not_started" ${filters.status==="not_started"?"selected":""}>Not started</option>
+          <option value="in_progress" ${filters.status==="in_progress"?"selected":""}>In progress</option>
+          <option value="completed" ${filters.status==="completed"?"selected":""}>Completed</option>
+        </select>
+      </div>
+      <div id="task-list">
+        ${filtered.length ? filtered.map(taskCard).join("") : `<div class="empty-state">No tasks match these filters.</div>`}
+      </div>
+    `;
+    document.getElementById("new-task-btn")?.addEventListener("click", openCreateModal);
+    document.getElementById("filter-team").addEventListener("change", (e) => { filters.team = e.target.value; render(); });
+    document.getElementById("filter-person")?.addEventListener("change", (e) => { filters.person = e.target.value; render(); });
+    document.getElementById("filter-status").addEventListener("change", (e) => { filters.status = e.target.value; render(); });
+    main.querySelectorAll("[data-start]").forEach(b => b.addEventListener("click", () => setStatus(b.dataset.start, "in_progress")));
+    main.querySelectorAll("[data-complete]").forEach(b => b.addEventListener("click", () => setStatus(b.dataset.complete, "completed")));
+    main.querySelectorAll("[data-delete-task]").forEach(b => b.addEventListener("click", () => deleteTask(b.dataset.deleteTask)));
+    main.querySelectorAll("[data-toggle-details]").forEach(b => b.addEventListener("click", () => toggleDetails(b.dataset.toggleDetails)));
+    expanded.forEach(id => loadDetails(id));
+  }
+
+  async function toggleDetails(id) {
+    if (expanded.has(id)) { expanded.delete(id); } else { expanded.add(id); }
+    render();
+  }
+
+  async function loadDetails(id) {
+    const el = document.getElementById(`details-${id}`);
+    if (!el) return;
+    el.innerHTML = `<div class="spinner"></div>`;
+    const [{ comments }, { attachments }] = await Promise.all([
+      apiFetch(`/tasks/comments?taskId=${id}`),
+      apiFetch(`/tasks/attachments?taskId=${id}`),
+    ]);
+    el.innerHTML = `
+      <div style="margin-bottom:14px;">
+        <div style="font-weight:700;font-size:13px;margin-bottom:6px;">Files</div>
+        ${attachments.length ? attachments.map(a => `<div style="font-size:13px;padding:3px 0;"><a href="${a.file_url}" target="_blank">${escapeHtml(a.file_name)}</a> <span class="muted">\u00b7 ${escapeHtml(a.uploader_name||"someone")}</span></div>`).join("") : `<div class="muted" style="font-size:13px;">No files attached.</div>`}
+        <form class="upload-attachment-form" data-task="${id}" style="display:flex;gap:8px;margin-top:8px;align-items:center;">
+          <input type="file" name="file" required>
+          <button class="btn btn-sm" type="submit">Attach</button>
+        </form>
+      </div>
+      <div>
+        <div style="font-weight:700;font-size:13px;margin-bottom:6px;">Comments</div>
+        ${comments.length ? comments.map(c => `<div style="font-size:13px;padding:5px 0;"><strong>${escapeHtml(c.author_name)}</strong> <span class="muted">${fmtDateTime(c.created_at)}</span><div>${escapeHtml(c.comment)}</div></div>`).join("") : `<div class="muted" style="font-size:13px;">No comments yet.</div>`}
+        <form class="add-comment-form" data-task="${id}" style="display:flex;gap:8px;margin-top:8px;">
+          <input class="input" name="comment" placeholder="Add a comment\u2026">
+          <button class="btn btn-sm" type="submit">Post</button>
+        </form>
+      </div>
+    `;
+    el.querySelector(".add-comment-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const comment = fd.get("comment");
+      if (!comment || !comment.trim()) return;
+      try { await apiFetch("/tasks/comment", { method: "POST", body: { taskId: id, comment } }); e.target.reset(); await loadDetails(id); }
+      catch (err) { toast(err.message, true); }
+    });
+    el.querySelector(".upload-attachment-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const input = e.target.querySelector("input[type=file]");
+      if (!input.files[0]) return;
+      const fd = new FormData();
+      fd.append("file", input.files[0]);
+      fd.append("taskId", id);
+      try {
+        const res = await fetch((window.__HATCHABLE__ && window.__HATCHABLE__.api || "/api") + "/tasks/upload-attachment", { method: "POST", credentials: "include", body: fd });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Upload failed");
+        toast("File attached");
+        await loadDetails(id);
+      } catch (err) { toast(err.message, true); }
+    });
+  }
+
+  async function setStatus(id, status) {
+    try { await apiFetch("/tasks/update-status", { method: "POST", body: { id, status } }); toast("Task updated"); await load(); }
+    catch (e) { toast(e.message, true); }
+  }
+  async function deleteTask(id) {
+    if (!confirm("Delete this task?")) return;
+    try { await apiFetch("/tasks/remove", { method: "POST", body: { id } }); toast("Task deleted"); await load(); }
+    catch (e) { toast(e.message, true); }
+  }
+
+  function openCreateModal() {
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop";
+    backdrop.innerHTML = `<div class="modal">
+      <h2>New task</h2>
+      <form id="task-form">
+        <div class="field"><label>Title</label><input class="input" name="title" required></div>
+        <div class="field"><label>Description</label><textarea class="input" name="description" rows="3"></textarea></div>
+        <div class="grid grid-2">
+          <div class="field"><label>Priority</label><select class="input" name="priority"><option value="low">Low</option><option value="medium" selected>Medium</option><option value="high">High</option></select></div>
+          <div class="field"><label>Due date/time</label><input class="input" type="datetime-local" name="dueAt"></div>
+        </div>
+        <div class="field"><label>Assign to</label>
+          <select class="input" name="assignMode">
+            <option value="everyone">Everyone</option>
+            <option value="team">A team</option>
+            <option value="individual">One member</option>
+          </select>
+        </div>
+        <div class="field" id="assign-team-field" style="display:none;"><label>Team</label>
+          <select class="input" name="assignedTeamId">${teams.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join("")}</select>
+        </div>
+        <div class="field" id="assign-user-field" style="display:none;"><label>Member</label>
+          <select class="input" name="assignedUserId">${members.map(m => `<option value="${m.id}">${escapeHtml(m.name)}</option>`).join("")}</select>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
+          <button type="button" class="btn btn-outline" id="cancel-btn">Cancel</button>
+          <button type="submit" class="btn">Create task</button>
+        </div>
+      </form>
+    </div>`;
+    document.body.appendChild(backdrop);
+    const form = backdrop.querySelector("#task-form");
+    form.assignMode.addEventListener("change", () => {
+      backdrop.querySelector("#assign-team-field").style.display = form.assignMode.value === "team" ? "" : "none";
+      backdrop.querySelector("#assign-user-field").style.display = form.assignMode.value === "individual" ? "" : "none";
+    });
+    backdrop.querySelector("#cancel-btn").addEventListener("click", () => backdrop.remove());
+    backdrop.addEventListener("click", (e) => { if (e.target === backdrop) backdrop.remove(); });
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const body = {
+        title: fd.get("title"), description: fd.get("description"), priority: fd.get("priority"),
+        dueAt: fd.get("dueAt") ? new Date(fd.get("dueAt")).toISOString() : null,
+      };
+      if (fd.get("assignMode") === "team") body.assignedTeamId = fd.get("assignedTeamId");
+      if (fd.get("assignMode") === "individual") body.assignedUserId = fd.get("assignedUserId");
+      try { await apiFetch("/tasks/create", { method: "POST", body }); toast("Task created"); backdrop.remove(); await load(); }
+      catch (err) { toast(err.message, true); }
+    });
+  }
+
+  await load();
+})();
+</script>
+</body>
+</html>

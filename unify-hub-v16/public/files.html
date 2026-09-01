@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Files \u2014 Unify Hub</title>
+<link rel="stylesheet" href="/theme.css">
+</head>
+<body>
+<div class="app-shell" id="app-shell"></div>
+<script src="/js/app.js"></script>
+<script>
+(async function () {
+  const user = await requireAuth("/files.html");
+  if (!user) return;
+  const isAdmin = user.role === "admin";
+  const main = document.getElementById("main-content");
+
+  const dash = await apiFetch("/dashboard");
+  const teams = dash.teams;
+  let activeTeam = teams[0]?.id;
+  let files = [];
+  let search = "";
+
+  function fmtSize(n) {
+    if (n < 1024) return n + " B";
+    if (n < 1024*1024) return (n/1024).toFixed(1) + " KB";
+    return (n/1024/1024).toFixed(1) + " MB";
+  }
+
+  function row(f) {
+    return `<div class="list-row">
+      <div><a href="${f.file_url}" target="_blank" style="font-weight:700;">${escapeHtml(f.file_name)}</a><div class="muted" style="font-size:12px;">${fmtSize(f.file_size)} \u00b7 uploaded by ${escapeHtml(f.uploader_name||'someone')} \u00b7 ${fmtDate(f.created_at)}</div></div>
+      ${isAdmin ? `<button class="btn btn-outline btn-sm" data-delete="${f.id}">Delete</button>` : ""}
+    </div>`;
+  }
+
+  function render() {
+    const filtered = files.filter(f => !search || f.file_name.toLowerCase().includes(search.toLowerCase()));
+    main.innerHTML = `
+      <div class="page-header"><h1>Files</h1></div>
+      <div class="tabs">${teams.map(t => `<button data-team="${t.id}" class="${activeTeam===t.id?'active':''}">${escapeHtml(t.name)}</button>`).join("")}</div>
+      <div class="card">
+        <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;">
+          <form id="upload-form" style="display:flex;gap:8px;align-items:center;">
+            <input type="file" name="file" id="file-input" required>
+            <button class="btn btn-sm" type="submit">Upload</button>
+          </form>
+          <input class="input" id="search-input" placeholder="Search files\u2026" value="${escapeHtml(search)}" style="max-width:220px;margin-left:auto;">
+        </div>
+        <div id="file-list">${filtered.length ? filtered.map(row).join("") : `<div class="empty-state">No files yet for this team.</div>`}</div>
+      </div>
+    `;
+    main.querySelectorAll("[data-team]").forEach(b => b.addEventListener("click", () => switchTeam(b.dataset.team)));
+    document.getElementById("upload-form").addEventListener("submit", upload);
+    document.getElementById("search-input").addEventListener("input", (e) => { search = e.target.value; render(); });
+    main.querySelectorAll("[data-delete]").forEach(b => b.addEventListener("click", () => removeFile(b.dataset.delete)));
+  }
+
+  async function loadFiles() {
+    if (!activeTeam) { files = []; render(); return; }
+    try { ({ files } = await apiFetch(`/team-files/list?teamId=${activeTeam}`)); }
+    catch (e) { files = []; if (e.status === 403) toast("You're not a member of that team", true); }
+    render();
+  }
+
+  async function switchTeam(id) { activeTeam = id; await loadFiles(); }
+
+  async function removeFile(id) {
+    if (!confirm("Delete this file?")) return;
+    try { await apiFetch("/team-files/remove", { method: "POST", body: { id } }); toast("File deleted"); await loadFiles(); }
+    catch (e) { toast(e.message, true); }
+  }
+
+  async function upload(e) {
+    e.preventDefault();
+    const input = document.getElementById("file-input");
+    if (!input.files[0]) return;
+    const fd = new FormData();
+    fd.append("file", input.files[0]);
+    fd.append("teamId", activeTeam);
+    try {
+      const res = await fetch((window.__HATCHABLE__ && window.__HATCHABLE__.api || "/api") + "/team-files/upload", { method: "POST", credentials: "include", body: fd });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Upload failed");
+      toast("File uploaded");
+      await loadFiles();
+    } catch (err) { toast(err.message, true); }
+  }
+
+  await loadFiles();
+})();
+</script>
+</body>
+</html>

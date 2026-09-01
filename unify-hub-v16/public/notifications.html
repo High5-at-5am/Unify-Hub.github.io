@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Notifications — Unify Hub</title>
+<link rel="stylesheet" href="/theme.css">
+</head>
+<body>
+<div class="app-shell" id="app-shell"></div>
+<script src="/js/app.js"></script>
+<script>
+(async function () {
+  const user = await requireAuth("/notifications.html");
+  if (!user) return;
+  const main = document.getElementById("main-content");
+
+  let dash;
+  async function load() { dash = await apiFetch("/dashboard"); render(); }
+
+  function row(n) {
+    return `<div class="list-row">
+      <div style="min-width:0;">
+        <div style="font-weight:${n.read_at ? "500" : "800"};">${escapeHtml(n.title)}</div>
+        ${n.body ? `<div class="muted" style="font-size:13px;">${escapeHtml(n.body)}</div>` : ""}
+        <div class="muted" style="font-size:11px;margin-top:2px;">${fmtDateTime(n.created_at)}</div>
+      </div>
+      ${!n.read_at ? `<button class="btn btn-outline btn-sm" data-read="${n.id}">Mark read</button>` : ''}
+    </div>`;
+  }
+
+  function render() {
+    const items = dash.notifications;
+    main.innerHTML = `
+      <div class="page-header"><h1>Notifications</h1></div>
+      <div class="card">${items.length ? items.map(row).join("") : `<div class="empty-state">You're all caught up.</div>`}</div>
+    `;
+    main.querySelectorAll("[data-read]").forEach(b => b.addEventListener("click", () => markRead(b.dataset.read)));
+  }
+
+  async function markRead(id) {
+    try { await apiFetch("/notifications/mark-read", { method: "POST", body: { id } }); await load(); }
+    catch (e) { toast(e.message, true); }
+  }
+
+  await load();
+})();
+</script>
+</body>
+</html>

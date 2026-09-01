@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Profile \u2014 Unify Hub</title>
+<link rel="stylesheet" href="/theme.css">
+</head>
+<body>
+<div class="app-shell" id="app-shell"></div>
+<script src="/js/app.js"></script>
+<script>
+(async function () {
+  const user = await requireAuth("/profile.html");
+  if (!user) return;
+  const main = document.getElementById("main-content");
+
+  const theme = await apiFetch("/settings/theme").catch(() => ({ primaryColor: "#f06b4e", personalPrimaryColor: null }));
+  const myColor = theme.personalPrimaryColor || theme.primaryColor;
+
+  main.innerHTML = `
+    <div class="page-header"><h1>Your profile</h1></div>
+    ${user.mustResetPassword ? `<div class="card" style="border-color:var(--ochre);background:rgba(208,166,86,0.08);margin-bottom:16px;">For security, please set a new PIN/password below.</div>` : ""}
+    <div class="grid grid-2">
+      <div class="card">
+        <h3 style="margin-top:0;">Basic info</h3>
+        <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px;">
+          <div class="avatar" style="width:56px;height:56px;font-size:18px;" id="avatar-preview">${user.profileImageUrl ? `<img src="${user.profileImageUrl}">` : initials(user.name)}</div>
+          <div>
+            <input type="file" id="avatar-input" accept="image/*" style="display:none;">
+            <button class="btn btn-outline btn-sm" id="avatar-btn">Change photo</button>
+          </div>
+        </div>
+        <form id="profile-form">
+          <div class="field"><label>Name</label><input class="input" name="name" value="${escapeHtml(user.name)}" required></div>
+          <div class="field"><label>Phone</label><input class="input" name="phone" value="${escapeHtml(user.phone || "")}"></div>
+          <div class="field"><label>Member ID</label><input class="input" value="${escapeHtml(user.memberId || user.username || "")}" disabled></div>
+          <div class="field"><label>Role</label><input class="input" value="${user.role === "admin" ? "Administrator" : "Member"}" disabled></div>
+          <button class="btn" type="submit">Save profile</button>
+        </form>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0;">Change PIN / password</h3>
+        <form id="pw-form">
+          ${!user.mustResetPassword ? `<div class="field"><label>Current PIN/password</label><input class="input" type="password" name="currentPassword" required></div>` : ""}
+          <div class="field"><label>New PIN/password (8+ characters)</label><input class="input" type="password" name="newPassword" required minlength="8"></div>
+          <button class="btn" type="submit">Update</button>
+        </form>
+      </div>
+      <div class="card">
+        <h3 style="margin-top:0;">My theme color</h3>
+        <p class="muted" style="font-size:13px;margin-top:-8px;">Pick a color just for your own view \u2014 it won't affect anyone else.</p>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+          <input type="color" id="my-color" value="${myColor}" style="width:42px;height:34px;border:1px solid var(--line);border-radius:8px;padding:2px;cursor:pointer;background:#fff;">
+          <input type="text" class="input" id="my-color-hex" value="${myColor}" maxlength="7" style="width:110px;font-family:monospace;">
+          ${theme.personalPrimaryColor ? `<button class="btn btn-outline btn-sm" id="reset-color-btn">Reset to org color</button>` : ""}
+        </div>
+        ${user.role === "admin" ? `<label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;text-transform:none;letter-spacing:normal;margin-bottom:14px;">
+          <input type="checkbox" id="set-default-check"> Also set as the organization default
+        </label>` : ""}
+        <button class="btn btn-sm" id="save-color-btn">Save color</button>
+      </div>
+    </div>
+  `;
+
+  document.getElementById("profile-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    try { await apiFetch("/profile/update", { method: "POST", body: { name: fd.get("name"), phone: fd.get("phone") } }); toast("Profile saved"); }
+    catch (err) { toast(err.message, true); }
+  });
+
+  document.getElementById("pw-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    try {
+      await apiFetch("/profile/change-password", { method: "POST", body: { currentPassword: fd.get("currentPassword"), newPassword: fd.get("newPassword") } });
+      toast("PIN/password updated");
+      e.target.reset();
+    } catch (err) { toast(err.message, true); }
+  });
+
+  const avatarInput = document.getElementById("avatar-input");
+  document.getElementById("avatar-btn").addEventListener("click", () => avatarInput.click());
+  avatarInput.addEventListener("change", async () => {
+    if (!avatarInput.files[0]) return;
+    const fd = new FormData();
+    fd.append("file", avatarInput.files[0]);
+    try {
+      const res = await fetch((window.__HATCHABLE__ && window.__HATCHABLE__.api || "/api") + "/profile/upload-avatar", { method: "POST", credentials: "include", body: fd });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Upload failed");
+      document.getElementById("avatar-preview").innerHTML = `<img src="${data.url}">`;
+      toast("Photo updated");
+    } catch (err) { toast(err.message, true); }
+  });
+
+  const colorPicker = document.getElementById("my-color");
+  const colorHex = document.getElementById("my-color-hex");
+  colorPicker.addEventListener("input", () => { colorHex.value = colorPicker.value; });
+  colorHex.addEventListener("input", () => { if (/^#[0-9a-fA-F]{6}$/.test(colorHex.value)) colorPicker.value = colorHex.value; });
+
+  document.getElementById("save-color-btn").addEventListener("click", async () => {
+    const setAsDefault = document.getElementById("set-default-check")?.checked || false;
+    try {
+      await apiFetch("/profile/update-theme", { method: "POST", body: { primaryColor: colorHex.value, setAsDefault } });
+      toast(setAsDefault ? "Color saved and set as organization default" : "Color saved");
+      await applyTheme();
+      const me = await apiFetch("/account/me");
+      renderShell(me.user, "/profile.html");
+    } catch (err) { toast(err.message, true); }
+  });
+
+  document.getElementById("reset-color-btn")?.addEventListener("click", async () => {
+    try {
+      await apiFetch("/profile/update-theme", { method: "POST", body: { primaryColor: null } });
+      toast("Reset to organization color");
+      await applyTheme();
+      location.reload();
+    } catch (err) { toast(err.message, true); }
+  });
+})();
+</script>
+</body>
+</html>

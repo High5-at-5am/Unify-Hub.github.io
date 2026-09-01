@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chat \u2014 Unify Hub</title>
+<link rel="stylesheet" href="/theme.css">
+</head>
+<body>
+<div class="app-shell" id="app-shell"></div>
+<script src="/js/app.js"></script>
+<script>
+(async function () {
+  const user = await requireAuth("/chat.html");
+  if (!user) return;
+  const isAdmin = user.role === "admin";
+  const main = document.getElementById("main-content");
+
+  const dash = await apiFetch("/dashboard").catch(() => ({ teams: [] }));
+  const myTeamChannels = isAdmin
+    ? dash.teams.map(t => ({ id: `team-${t.id}`, label: t.name }))
+    : dash.teams.filter(t => (dash.members || []).length === 0 ? false : false).map(t => ({ id: `team-${t.id}`, label: t.name }));
+  // Non-admins: derive their team channel(s) from their own tasks/team membership isn't in payload,
+  // so fetch team list and let the server enforce access; show all teams as tabs and let 403s filter naturally.
+  const channels = [{ id: "general", label: "General" }, ...dash.teams.map(t => ({ id: `team-${t.id}`, label: t.name }))];
+
+  let activeChannel = "general";
+  let messages = [];
+
+  function renderTabs() {
+    return `<div class="tabs">${channels.map(c => `<button data-ch="${c.id}" class="${activeChannel === c.id ? "active" : ""}">${escapeHtml(c.label)}</button>`).join("")}</div>`;
+  }
+
+  function renderMessages() {
+    if (!messages.length) return `<div class="empty-state">No messages yet. Say hello!</div>`;
+    return messages.map(m => {
+      const mine = m.created_by_id === user.id;
+      return `<div class="chat-msg ${mine ? "mine" : ""}">
+        <div class="chat-meta">${mine ? "You" : escapeHtml(m.author_name)} \u00b7 ${fmtDateTime(m.created_at)}</div>
+        <div class="bubble">${escapeHtml(m.body)} ${(isAdmin || mine) ? `<button data-del="${m.id}" style="border:none;background:none;cursor:pointer;opacity:0.5;margin-left:6px;">\u2715</button>` : ""}</div>
+      </div>`;
+    }).join("");
+  }
+
+  function render() {
+    main.innerHTML = `
+      <div class="page-header"><h1>Chat</h1></div>
+      ${renderTabs()}
+      <div class="card">
+        <div class="chat-scroll" id="chat-scroll">${renderMessages()}</div>
+        <form id="send-form" style="display:flex;gap:8px;margin-top:14px;">
+          <input class="input" name="body" placeholder="Message ${channels.find(c=>c.id===activeChannel)?.label || ''}" autocomplete="off">
+          <button class="btn" type="submit">Send</button>
+        </form>
+      </div>
+    `;
+    main.querySelectorAll("[data-ch]").forEach(b => b.addEventListener("click", () => switchChannel(b.dataset.ch)));
+    main.querySelectorAll("[data-del]").forEach(b => b.addEventListener("click", () => removeMsg(b.dataset.del)));
+    const scroll = document.getElementById("chat-scroll");
+    scroll.scrollTop = scroll.scrollHeight;
+    document.getElementById("send-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const body = fd.get("body");
+      if (!body || !body.trim()) return;
+      e.target.reset();
+      try { await apiFetch("/chat/send", { method: "POST", body: { body, channel: activeChannel } }); await loadMessages(); }
+      catch (err) { toast(err.message, true); }
+    });
+  }
+
+  async function loadMessages() {
+    try {
+      const res = await apiFetch(`/chat/list?channel=${encodeURIComponent(activeChannel)}`);
+      messages = res.messages;
+    } catch (e) {
+      messages = [];
+      if (e.status === 403) toast("You're not a member of that team", true);
+    }
+    render();
+  }
+
+  async function switchChannel(id) {
+    activeChannel = id;
+    await loadMessages();
+  }
+
+  async function removeMsg(id) {
+    if (!confirm("Delete this message?")) return;
+    try { await apiFetch("/chat/remove", { method: "POST", body: { id } }); await loadMessages(); }
+    catch (e) { toast(e.message, true); }
+  }
+
+  await loadMessages();
+})();
+</script>
+</body>
+</html>
