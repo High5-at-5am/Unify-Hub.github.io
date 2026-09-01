@@ -1,0 +1,179 @@
+git reset --hard HEAD
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Members \u2014 Unify Hub</title>
+<link rel="stylesheet" href="/theme.css">
+</head>
+<body>
+<div class="app-shell" id="app-shell"></div>
+<script src="/js/app.js"></script>
+<script>
+(async function () {
+  const user = await requireAuth("/members.html");
+  if (!user) return;
+  const main = document.getElementById("main-content");
+  if (!requireAdminOrRedirect(user)) return;
+
+  let dash, search = "";
+  async function load() { dash = await apiFetch("/dashboard"); render(); }
+
+  function teamName(id) { return dash.teams.find(t => t.id === id)?.name || "\u2014"; }
+  function teamOf(userId) {
+    // memberships aren't in the dashboard payload; fetched lazily per-row isn't ideal, show "Manage" instead.
+    return null;
+  }
+
+  function row(m) {
+    return `<div class="list-row">
+      <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+        <div class="avatar">${m.profile_image_url ? `<img src="${m.profile_image_url}">` : initials(m.name)}</div>
+        <div style="min-width:0;">
+          <div style="font-weight:700;display:flex;align-items:center;gap:6px;">${escapeHtml(m.name)} ${m.role === "admin" ? '<span class="badge badge-important">Admin</span>' : ''} ${m.status === "inactive" ? '<span class="badge badge-normal">Inactive</span>' : ''}</div>
+          <div class="muted" style="font-size:12px;">${escapeHtml(m.member_id || m.username || "")}${m.phone ? " \u00b7 " + escapeHtml(m.phone) : ""}</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
+        <button class="btn btn-outline btn-sm" data-edit="${m.id}">Edit</button>
+        <button class="btn btn-outline btn-sm" data-team="${m.id}">Team</button>
+        <button class="btn btn-outline btn-sm" data-reset="${m.id}">Reset PIN</button>
+        ${m.role !== "admin" ? `<button class="btn btn-outline btn-sm" data-promote="${m.id}">Make admin</button>` : (m.id !== user.id ? `<button class="btn btn-outline btn-sm" data-demote="${m.id}">Remove admin</button>` : '')}
+        <button class="btn btn-outline btn-sm" data-toggle="${m.id}" data-status="${m.status}">${m.status === "active" ? "Deactivate" : "Activate"}</button>
+        ${m.status === "inactive" ? `<button class="btn btn-danger btn-sm" data-delete="${m.id}">Delete</button>` : ""}
+      </div>
+    </div>`;
+  }
+
+  function render() {
+    const list = dash.members.filter(m => !search || m.name.toLowerCase().includes(search.toLowerCase()) || (m.member_id||"").toLowerCase().includes(search.toLowerCase()));
+    const adminCount = dash.members.filter(m => m.role === "admin").length;
+    main.innerHTML = `
+      <div class="page-header">
+        <h1>Members</h1>
+        <button class="btn" id="new-btn">+ Add member</button>
+      </div>
+      <p class="muted" style="margin-top:-14px;">${adminCount} of 5 admin seats used.</p>
+      <div class="field" style="max-width:320px;"><input class="input" id="search-input" placeholder="Search by name or Member ID" value="${escapeHtml(search)}"></div>
+      <div class="card">${list.length ? list.map(row).join("") : `<div class="empty-state">No members found.</div>`}</div>
+    `;
+    document.getElementById("new-btn").addEventListener("click", openCreateModal);
+    document.getElementById("search-input").addEventListener("input", (e) => { search = e.target.value; render(); });
+    main.querySelectorAll("[data-edit]").forEach(b => b.addEventListener("click", () => openEditModal(b.dataset.edit)));
+    main.querySelectorAll("[data-team]").forEach(b => b.addEventListener("click", () => openTeamModal(b.dataset.team)));
+    main.querySelectorAll("[data-reset]").forEach(b => b.addEventListener("click", () => resetPin(b.dataset.reset)));
+    main.querySelectorAll("[data-promote]").forEach(b => b.addEventListener("click", () => promote(b.dataset.promote)));
+    main.querySelectorAll("[data-demote]").forEach(b => b.addEventListener("click", () => demote(b.dataset.demote)));
+    main.querySelectorAll("[data-toggle]").forEach(b => b.addEventListener("click", () => toggleStatus(b.dataset.toggle, b.dataset.status)));
+    main.querySelectorAll("[data-delete]").forEach(b => b.addEventListener("click", () => deleteMember(b.dataset.delete)));
+  }
+
+  async function resetPin(id) {
+    try { const r = await apiFetch("/members/reset-password", { method: "POST", body: { id } }); alert(`Temporary PIN/password: ${r.temporaryPassword}\n\nShare this with the member securely \u2014 they'll be asked to set a new one on next login.`); await load(); }
+    catch (e) { toast(e.message, true); }
+  }
+  async function promote(id) {
+    try { await apiFetch("/members/promote", { method: "POST", body: { id } }); toast("Promoted to admin"); await load(); }
+    catch (e) { toast(e.message, true); }
+  }
+  async function demote(id) {
+    try { await apiFetch("/members/demote", { method: "POST", body: { id } }); toast("Admin removed"); await load(); }
+    catch (e) { toast(e.message, true); }
+  }
+  async function toggleStatus(id, current) {
+    const next = current === "active" ? "inactive" : "active";
+    try { await apiFetch("/members/deactivate", { method: "POST", body: { userId: id, status: next } }); toast(next === "active" ? "Activated" : "Deactivated"); await load(); }
+    catch (e) { toast(e.message, true); }
+  }
+  async function deleteMember(id) {
+    if (!confirm("Permanently delete this member? This can't be undone.")) return;
+    try { await apiFetch("/members/remove", { method: "POST", body: { id } }); toast("Member deleted"); await load(); }
+    catch (e) { toast(e.message, true); }
+  }
+
+  function openTeamModal(id) {
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop";
+    backdrop.innerHTML = `<div class="modal">
+      <h2>Assign team</h2>
+      <form id="team-form">
+        <div class="field"><label>Team</label><select class="input" name="teamId">${dash.teams.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join("")}</select></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
+          <button type="button" class="btn btn-outline" id="cancel-btn">Cancel</button>
+          <button type="submit" class="btn">Assign</button>
+        </div>
+      </form>
+    </div>`;
+    document.body.appendChild(backdrop);
+    backdrop.querySelector("#cancel-btn").addEventListener("click", () => backdrop.remove());
+    backdrop.addEventListener("click", (e) => { if (e.target === backdrop) backdrop.remove(); });
+    backdrop.querySelector("#team-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      try { await apiFetch("/members/assign-team", { method: "POST", body: { userId: id, teamId: fd.get("teamId") } }); toast("Team assigned"); backdrop.remove(); await load(); }
+      catch (err) { toast(err.message, true); }
+    });
+  }
+
+  function openEditModal(id) {
+    const m = dash.members.find(x => x.id === id);
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop";
+    backdrop.innerHTML = `<div class="modal">
+      <h2>Edit member</h2>
+      <form id="edit-form">
+        <div class="field"><label>Name</label><input class="input" name="name" value="${escapeHtml(m.name)}" required></div>
+        <div class="field"><label>Phone</label><input class="input" name="phone" value="${escapeHtml(m.phone || "")}"></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
+          <button type="button" class="btn btn-outline" id="cancel-btn">Cancel</button>
+          <button type="submit" class="btn">Save</button>
+        </div>
+      </form>
+    </div>`;
+    document.body.appendChild(backdrop);
+    backdrop.querySelector("#cancel-btn").addEventListener("click", () => backdrop.remove());
+    backdrop.addEventListener("click", (e) => { if (e.target === backdrop) backdrop.remove(); });
+    backdrop.querySelector("#edit-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      try { await apiFetch("/members/update", { method: "POST", body: { id, name: fd.get("name"), phone: fd.get("phone") } }); toast("Saved"); backdrop.remove(); await load(); }
+      catch (err) { toast(err.message, true); }
+    });
+  }
+
+  function openCreateModal() {
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop";
+    backdrop.innerHTML = `<div class="modal">
+      <h2>Add member</h2>
+      <form id="create-form">
+        <div class="field"><label>Name</label><input class="input" name="name" required></div>
+        <div class="field"><label>Member ID</label><input class="input" name="memberId" placeholder="e.g. UH-014" required></div>
+        <div class="field"><label>Phone (optional)</label><input class="input" name="phone"></div>
+        <div class="field"><label>PIN / password (8+ characters)</label><input class="input" name="password" required minlength="8"></div>
+        <div class="field"><label>Team (optional)</label><select class="input" name="teamId"><option value="">\u2014 None \u2014</option>${dash.teams.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join("")}</select></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
+          <button type="button" class="btn btn-outline" id="cancel-btn">Cancel</button>
+          <button type="submit" class="btn">Add member</button>
+        </div>
+      </form>
+    </div>`;
+    document.body.appendChild(backdrop);
+    backdrop.querySelector("#cancel-btn").addEventListener("click", () => backdrop.remove());
+    backdrop.addEventListener("click", (e) => { if (e.target === backdrop) backdrop.remove(); });
+    backdrop.querySelector("#create-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      try {
+        await apiFetch("/members/create", { method: "POST", body: { name: fd.get("name"), memberId: fd.get("memberId"), phone: fd.get("phone"), password: fd.get("password"), teamId: fd.get("teamId") || null } });
+        toast("Member added"); backdrop.remove(); await load();
+      } catch (err) { toast(err.message, true); }
+    });
+  }
+
+  await load();
+})();
+</script>
+</body>
+</html>

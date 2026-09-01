@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Overview \u2014 Unify Hub</title>
+<link rel="stylesheet" href="/theme.css">
+</head>
+<body>
+<div class="app-shell" id="app-shell"></div>
+<script src="/js/app.js"></script>
+<script>
+(async function () {
+  const user = await requireAuth("/dashboard.html");
+  if (!user) return;
+  const isAdmin = user.role === "admin";
+  const main = document.getElementById("main-content");
+  main.innerHTML = `<div class="empty-state"><div class="spinner" style="margin:0 auto;"></div></div>`;
+
+  let data;
+  try { data = await apiFetch("/dashboard"); } catch (e) { toast(e.message, true); return; }
+
+  const firstName = (user.name || "there").split(" ")[0];
+  const now = Date.now();
+  const myTasks = data.tasks;
+  const dueToday = myTasks.filter(t => t.due_at && new Date(t.due_at).toDateString() === new Date().toDateString() && t.status !== "completed");
+  const overdue = myTasks.filter(t => isOverdue(t.due_at, t.status));
+  const upcomingEvents = data.events.filter(e => new Date(e.starts_at).getTime() >= now).sort((a,b) => new Date(a.starts_at) - new Date(b.starts_at)).slice(0, 4);
+  const unreadNotifs = data.notifications.filter(n => !n.read_at);
+
+  const teamsById = {};
+  data.teams.forEach(t => teamsById[t.id] = t);
+
+  function taskRow(t) {
+    const overdueFlag = isOverdue(t.due_at, t.status);
+    return `<div class="list-row">
+      <div style="min-width:0;">
+        <div style="font-weight:700;">${escapeHtml(t.title)}</div>
+        <div class="muted" style="font-size:12px;">${t.due_at ? (overdueFlag ? '<span style="color:var(--brick);font-weight:700;">Overdue \u00b7 </span>' : '') + fmtDateTime(t.due_at) : "No due date"}</div>
+      </div>
+      <span class="badge badge-${t.status}">${t.status.replace("_"," ")}</span>
+    </div>`;
+  }
+
+  function eventRow(e) {
+    return `<div class="list-row">
+      <div style="min-width:0;">
+        <div style="font-weight:700;">${escapeHtml(e.title)}</div>
+        <div class="muted" style="font-size:12px;">${fmtDateTime(e.starts_at)}${e.location ? " \u00b7 " + escapeHtml(e.location) : ""}</div>
+      </div>
+    </div>`;
+  }
+
+  function announcementRow(a) {
+    return `<div class="list-row">
+      <div style="min-width:0;">
+        <div style="font-weight:700;">${escapeHtml(a.title)} ${a.priority === "important" ? '<span class="badge badge-important">Important</span>' : ""}</div>
+        <div class="muted" style="font-size:12px;">${fmtDate(a.created_at)}</div>
+      </div>
+    </div>`;
+  }
+
+  main.innerHTML = `
+    <div class="page-header">
+      <div>
+        <h1>Good day, ${escapeHtml(firstName)} \ud83d\udc4b</h1>
+        <p class="muted">${isAdmin ? "Here's the workspace at a glance." : "Here's what's on your plate today."}</p>
+      </div>
+    </div>
+
+    <div class="grid grid-4" style="margin-bottom:24px;">
+      <div class="card stat-card"><div class="num" style="color:var(--brick);">${overdue.length}</div><div class="label">Overdue tasks</div></div>
+      <div class="card stat-card"><div class="num" style="color:var(--ochre);">${dueToday.length}</div><div class="label">Due today</div></div>
+      <div class="card stat-card"><div class="num" style="color:var(--sky);">${upcomingEvents.length}</div><div class="label">Upcoming events</div></div>
+      <div class="card stat-card"><div class="num" style="color:var(--moss);">${unreadNotifs.length}</div><div class="label">Unread alerts</div></div>
+    </div>
+
+    ${isAdmin ? `
+    <div class="grid grid-4" style="margin-bottom:24px;">
+      <div class="card stat-card"><div class="num">${data.members.length}</div><div class="label">Total members</div></div>
+      <div class="card stat-card"><div class="num">${data.tasks.filter(t=>t.status!=="completed").length}</div><div class="label">Active tasks</div></div>
+      <div class="card stat-card"><div class="num">${data.tasks.filter(t=>t.status==="completed").length}</div><div class="label">Completed tasks</div></div>
+      <div class="card stat-card"><div class="num">${data.teams.length}</div><div class="label">Teams</div></div>
+    </div>` : ""}
+
+    <div class="grid grid-2">
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+          <h3 style="margin:0;">Your tasks</h3><a href="/tasks.html" style="font-size:12px;font-weight:700;">View all \u2192</a>
+        </div>
+        ${myTasks.length ? myTasks.slice(0,5).map(taskRow).join("") : `<div class="empty-state">No tasks assigned yet.</div>`}
+      </div>
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+          <h3 style="margin:0;">Upcoming events</h3><a href="/calendar.html" style="font-size:12px;font-weight:700;">Calendar \u2192</a>
+        </div>
+        ${upcomingEvents.length ? upcomingEvents.map(eventRow).join("") : `<div class="empty-state">Nothing on the calendar yet.</div>`}
+      </div>
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+          <h3 style="margin:0;">Recent announcements</h3><a href="/announcements.html" style="font-size:12px;font-weight:700;">View all \u2192</a>
+        </div>
+        ${data.announcements.length ? data.announcements.slice(0,4).map(announcementRow).join("") : `<div class="empty-state">No announcements yet.</div>`}
+      </div>
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+          <h3 style="margin:0;">Your team</h3>
+        </div>
+        ${(() => {
+          if (isAdmin) {
+            return data.teams.map(t => `<div class="list-row"><div><span class="team-dot" style="background:${teamColor(t.color)};"></span>${escapeHtml(t.name)}</div><span class="muted" style="font-size:12px;">${escapeHtml(t.description||"")}</span></div>`).join("");
+          }
+          if (data.myTeam) {
+            return `<div class="list-row"><div><span class="team-dot" style="background:${teamColor(data.myTeam.color)};"></span><strong>${escapeHtml(data.myTeam.name)}</strong></div></div>
+              <div class="muted" style="font-size:13px;">${escapeHtml(data.myTeam.description || "")}</div>`;
+          }
+          return `<div class="empty-state">You haven't been assigned to a team yet \u2014 ask an admin.</div>`;
+        })()}
+      </div>
+    </div>
+  `;
+})();
+</script>
+</body>
+</html>

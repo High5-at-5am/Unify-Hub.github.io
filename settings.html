@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings \u2014 Unify Hub</title>
+<link rel="stylesheet" href="/theme.css">
+<style>
+  .swatch-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .swatch-row:last-child { border-bottom: none; }
+  .swatch-row label { margin: 0; flex-shrink: 0; width: 140px; }
+  input[type="color"] { width: 42px; height: 34px; border: 1px solid var(--line); border-radius: 8px; padding: 2px; cursor: pointer; background: #fff; }
+  .hex-input { width: 110px; font-family: monospace; }
+</style>
+</head>
+<body>
+<div class="app-shell" id="app-shell"></div>
+<script src="/js/app.js"></script>
+<script>
+(async function () {
+  const user = await requireAuth("/settings.html");
+  if (!user) return;
+  const main = document.getElementById("main-content");
+  if (!requireAdminOrRedirect(user)) return;
+
+  let theme = await apiFetch("/settings/theme");
+  let affirmations = await apiFetch("/affirmations/list");
+
+  function swatchRow(label, id, hex) {
+    return `<div class="swatch-row">
+      <label for="${id}">${escapeHtml(label)}</label>
+      <input type="color" id="${id}" value="${hex}">
+      <input type="text" class="input hex-input" id="${id}-hex" value="${hex}" maxlength="7">
+    </div>`;
+  }
+
+  function render() {
+    main.innerHTML = `
+      <div class="page-header"><h1>Settings</h1></div>
+
+      <div class="grid grid-2" style="align-items:start;">
+        <div class="card">
+          <h3 style="margin-top:0;">Organization</h3>
+          <div class="field"><label>Organization name</label><input class="input" id="org-name" value="${escapeHtml(theme.orgName)}"></div>
+
+          <h3>Theme colors</h3>
+          <p class="muted" style="margin-top:-8px;font-size:13px;">This is the default color everyone sees unless they've picked their own on their Profile page. Pick one yourself, hit "Generate palette", or fine-tune on <a href="https://coolors.co" target="_blank">Coolors.co</a> and paste the result back in below.</p>
+
+          ${swatchRow("Org default color", "primary", theme.primaryColor)}
+          ${theme.teams.map(t => swatchRow(t.name + " team", "team-" + t.id, t.color.startsWith("#") ? t.color : "#f06b4e")).join("")}
+
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px;">
+            <button class="btn btn-outline btn-sm" id="generate-btn">\ud83c\udfb2 Generate palette</button>
+            <button class="btn btn-outline btn-sm" id="coolors-btn">Open in Coolors.co \u2192</button>
+          </div>
+
+          <div class="field" style="margin-top:18px;">
+            <label>Paste a Coolors.co URL or hex list</label>
+            <div style="display:flex;gap:8px;">
+              <input class="input" id="coolors-import" placeholder="https://coolors.co/f06b4e-718a68-5d91ad-d0a656-a85b4f-1c2027">
+              <button class="btn btn-outline btn-sm" id="import-btn">Apply</button>
+            </div>
+          </div>
+
+          <button class="btn" id="save-btn" style="margin-top:20px;">Save changes</button>
+        </div>
+
+        <div class="card">
+          <h3 style="margin-top:0;">Preview</h3>
+          <p class="muted" style="font-size:13px;margin-top:-8px;">Colors update live as you edit \u2014 nothing is saved until you click Save.</p>
+          <div id="preview-area"></div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:16px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <h3 style="margin:0;">Daily affirmations</h3>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;text-transform:none;letter-spacing:normal;">
+            <input type="checkbox" id="affirmations-enabled" ${affirmations.enabled ? "checked" : ""}> Show on every page
+          </label>
+        </div>
+        <p class="muted" style="font-size:13px;margin-top:0;">One message shows per day, picked from this list and rotated automatically \u2014 everyone sees the same one on a given day.</p>
+        <div id="affirmation-list">${affirmations.affirmations.map(a => `<div class="list-row">
+          <div>${escapeHtml(a.message)}</div>
+          <button class="btn btn-outline btn-sm" data-remove-affirmation="${a.id}">Remove</button>
+        </div>`).join("") || `<div class="empty-state">No affirmations yet.</div>`}</div>
+        <div style="display:flex;gap:8px;margin-top:14px;">
+          <input class="input" id="new-affirmation" placeholder="Add a new affirmation\u2026">
+          <button class="btn btn-sm" id="add-affirmation-btn">Add</button>
+        </div>
+      </div>
+    `;
+    wireUp();
+    renderPreview();
+  }
+
+  function currentColors() {
+    const primary = document.getElementById("primary-hex").value;
+    const teamColors = {};
+    theme.teams.forEach(t => { teamColors[t.id] = document.getElementById(`team-${t.id}-hex`).value; });
+    return { primary, teamColors };
+  }
+
+  function renderPreview() {
+    const { primary, teamColors } = currentColors();
+    const area = document.getElementById("preview-area");
+    area.innerHTML = `
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        <button class="btn" style="background:${primary};border-color:${primary};align-self:flex-start;">Sample button</button>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;">
+          ${theme.teams.map(t => `<span class="tag-pill" style="background:${teamColors[t.id]}22;color:${teamColors[t.id]};font-weight:800;">${escapeHtml(t.name)}</span>`).join("")}
+        </div>
+        <span class="badge" style="background:${primary}22;color:${primary};">Important</span>
+      </div>
+    `;
+  }
+
+  function syncPickerAndHex(colorId) {
+    const picker = document.getElementById(colorId);
+    const hex = document.getElementById(colorId + "-hex");
+    picker.addEventListener("input", () => { hex.value = picker.value; renderPreview(); });
+    hex.addEventListener("input", () => {
+      if (/^#[0-9a-fA-F]{6}$/.test(hex.value)) { picker.value = hex.value; renderPreview(); }
+    });
+  }
+
+  function randomHex() {
+    // Golden-angle hue rotation keeps generated palettes visually distinct
+    // and reasonably pleasant, similar in spirit to Coolors' randomizer.
+    const h = Math.floor(Math.random() * 360);
+    const s = 55 + Math.floor(Math.random() * 25);
+    const l = 45 + Math.floor(Math.random() * 15);
+    return hslToHex(h, s, l);
+  }
+  function hslToHex(h, s, l) {
+    s /= 100; l /= 100;
+    const k = n => (n + h / 30) % 12;
+    const a = s * Math.min(l, 1 - l);
+    const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+    const toHex = x => Math.round(255 * x).toString(16).padStart(2, "0");
+    return `#${toHex(f(0))}${toHex(f(8))}${toHex(f(4))}`;
+  }
+  function generatePalette() {
+    const baseHue = Math.floor(Math.random() * 360);
+    const golden = 137.5;
+    const primary = hslToHex(baseHue, 70, 55);
+    document.getElementById("primary").value = primary;
+    document.getElementById("primary-hex").value = primary;
+    theme.teams.forEach((t, i) => {
+      const hue = (baseHue + golden * (i + 1)) % 360;
+      const hex = hslToHex(hue, 55 + (i % 3) * 8, 45 + (i % 2) * 8);
+      document.getElementById(`team-${t.id}`).value = hex;
+      document.getElementById(`team-${t.id}-hex`).value = hex;
+    });
+    renderPreview();
+    toast("Palette generated \u2014 review, then Save to apply");
+  }
+
+  function extractHexList(text) {
+    const matches = text.match(/[0-9a-fA-F]{6}/g) || [];
+    return matches.map(h => "#" + h);
+  }
+
+  function wireUp() {
+    syncPickerAndHex("primary");
+    theme.teams.forEach(t => syncPickerAndHex("team-" + t.id));
+    document.getElementById("generate-btn").addEventListener("click", generatePalette);
+    document.getElementById("coolors-btn").addEventListener("click", () => {
+      const { primary, teamColors } = currentColors();
+      const hexes = [primary, ...theme.teams.map(t => teamColors[t.id])].map(h => h.replace("#", ""));
+      window.open(`https://coolors.co/${hexes.join("-")}`, "_blank");
+    });
+    document.getElementById("import-btn").addEventListener("click", () => {
+      const text = document.getElementById("coolors-import").value;
+      const hexes = extractHexList(text);
+      if (!hexes.length) { toast("Couldn't find any hex colors in that text", true); return; }
+      document.getElementById("primary").value = hexes[0];
+      document.getElementById("primary-hex").value = hexes[0];
+      theme.teams.forEach((t, i) => {
+        const hex = hexes[i + 1] || hexes[i % hexes.length];
+        document.getElementById(`team-${t.id}`).value = hex;
+        document.getElementById(`team-${t.id}-hex`).value = hex;
+      });
+      renderPreview();
+      toast("Palette applied \u2014 review, then Save to apply");
+    });
+    document.getElementById("save-btn").addEventListener("click", save);
+    document.getElementById("affirmations-enabled").addEventListener("change", toggleAffirmations);
+    document.getElementById("add-affirmation-btn").addEventListener("click", addAffirmation);
+    main.querySelectorAll("[data-remove-affirmation]").forEach(b => b.addEventListener("click", () => removeAffirmation(b.dataset.removeAffirmation)));
+  }
+
+  async function toggleAffirmations(e) {
+    try { await apiFetch("/affirmations/toggle", { method: "POST", body: { enabled: e.target.checked } }); toast(e.target.checked ? "Affirmations enabled" : "Affirmations disabled"); }
+    catch (err) { toast(err.message, true); e.target.checked = !e.target.checked; }
+  }
+
+  async function addAffirmation() {
+    const input = document.getElementById("new-affirmation");
+    const message = input.value.trim();
+    if (!message) return;
+    try {
+      await apiFetch("/affirmations/create", { method: "POST", body: { message } });
+      input.value = "";
+      affirmations = await apiFetch("/affirmations/list");
+      render();
+      toast("Affirmation added");
+    } catch (err) { toast(err.message, true); }
+  }
+
+  async function removeAffirmation(id) {
+    if (!confirm("Remove this affirmation?")) return;
+    try {
+      await apiFetch("/affirmations/remove", { method: "POST", body: { id } });
+      affirmations = await apiFetch("/affirmations/list");
+      render();
+      toast("Removed");
+    } catch (err) { toast(err.message, true); }
+  }
+
+  async function save() {
+    const { primary, teamColors } = currentColors();
+    const orgName = document.getElementById("org-name").value;
+    try {
+      await apiFetch("/settings/update", { method: "POST", body: { orgName, primaryColor: primary, teamColors } });
+      toast("Theme saved");
+      theme = await apiFetch("/settings/theme");
+      await applyTheme();
+      render();
+    } catch (e) { toast(e.message, true); }
+  }
+
+  render();
+})();
+</script>
+</body>
+</html>

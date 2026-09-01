@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin Center \u2014 Unify Hub</title>
+<link rel="stylesheet" href="/theme.css">
+<style>
+  .link-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+  .link-tile { display: flex; flex-direction: column; gap: 4px; padding: 16px; background: #fff; border: 1px solid var(--line); border-radius: var(--radius-md); text-decoration: none; color: var(--ink); box-shadow: var(--shadow-sm); }
+  .link-tile:hover { text-decoration: none; box-shadow: var(--shadow-md); transform: translateY(-1px); }
+  .link-tile .icon { font-size: 22px; }
+  .link-tile .name { font-weight: 800; font-size: 14px; }
+  .progress-bar { height: 8px; border-radius: 999px; background: var(--cream-2); overflow: hidden; }
+  .progress-bar .fill { height: 100%; border-radius: 999px; }
+  .roster-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; background: var(--cream-2); font-size: 12px; margin: 2px; }
+  .roster-chip button { border: none; background: none; cursor: pointer; color: var(--ink-soft); font-size: 11px; }
+</style>
+</head>
+<body>
+<div class="app-shell" id="app-shell"></div>
+<script src="/js/app.js"></script>
+<script>
+(async function () {
+  const user = await requireAuth("/admin.html");
+  if (!user) return;
+  const main = document.getElementById("main-content");
+  if (!requireAdminOrRedirect(user)) return;
+
+  let overview = await apiFetch("/admin/overview");
+  let dash = await apiFetch("/dashboard");
+
+  const LINKS = [
+    { href: "/members.html", icon: "\ud83d\udc65", name: "Members" },
+    { href: "/tasks.html", icon: "\ud83d\udccb", name: "All tasks" },
+    { href: "/calendar.html", icon: "\ud83d\udcc5", name: "Events" },
+    { href: "/announcements.html", icon: "\ud83d\udce2", name: "Announcements" },
+    { href: "/files.html", icon: "\ud83d\uddc2\ufe0f", name: "Files" },
+    { href: "/apps.html", icon: "\ud83d\udd17", name: "App links" },
+    { href: "/settings.html", icon: "\u2699\ufe0f", name: "Settings" },
+    { href: "/activity.html", icon: "\ud83d\udcdd", name: "Activity log" },
+  ];
+
+  function statCard(label, value, color) {
+    return `<div class="card stat-card"><div class="num" style="${color ? `color:${color};` : ""}">${value}</div><div class="label">${label}</div></div>`;
+  }
+
+  function teamProgressRow(t) {
+    return `<div style="margin-bottom:14px;">
+      <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:700;margin-bottom:4px;">
+        <span><span class="team-dot" style="background:${teamColor(t.color)};"></span>${escapeHtml(t.name)}</span>
+        <span class="muted">${t.total ? `${t.completed}/${t.total} done${t.overdue ? ` \u00b7 ${t.overdue} overdue` : ""}` : "No team tasks"}</span>
+      </div>
+      <div class="progress-bar"><div class="fill" style="width:${t.pct ?? 0}%;background:${teamColor(t.color)};"></div></div>
+    </div>`;
+  }
+
+  function teamManageCard(t) {
+    const roster = dash.members.filter(m => m.team_id === t.id);
+    const unassigned = dash.members.filter(m => !m.team_id);
+    return `<div class="card" style="margin-bottom:12px;">
+      <form class="team-edit-form" data-team="${t.id}" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px;">
+        <div class="field" style="margin:0;flex:1;min-width:140px;"><label>Team name</label><input class="input" name="name" value="${escapeHtml(t.name)}"></div>
+        <div class="field" style="margin:0;flex:2;min-width:180px;"><label>Description</label><input class="input" name="description" value="${escapeHtml(t.description || "")}"></div>
+        <div class="field" style="margin:0;flex:1;min-width:140px;"><label>Leader</label>
+          <select class="input" name="leaderId">
+            <option value="">\u2014 None \u2014</option>
+            ${roster.map(m => `<option value="${m.id}" ${t.leader_id===m.id?"selected":""}>${escapeHtml(m.name)}</option>`).join("")}
+          </select>
+        </div>
+        <button class="btn btn-sm" type="submit">Save</button>
+      </form>
+      <div style="font-size:12px;font-weight:700;color:var(--ink-soft);margin-bottom:6px;">MEMBERS (${roster.length})</div>
+      <div style="margin-bottom:10px;">
+        ${roster.length ? roster.map(m => `<span class="roster-chip">${escapeHtml(m.name)}<button data-remove-roster="${m.id}">\u2715</button></span>`).join("") : `<span class="muted" style="font-size:13px;">No members yet.</span>`}
+      </div>
+      ${unassigned.length ? `<div style="display:flex;gap:8px;align-items:center;">
+        <select class="input add-roster-select" data-team-add="${t.id}" style="max-width:220px;">
+          <option value="">+ Add a member\u2026</option>
+          ${unassigned.map(m => `<option value="${m.id}">${escapeHtml(m.name)}</option>`).join("")}
+        </select>
+      </div>` : ""}
+    </div>`;
+  }
+
+  function render() {
+    const s = overview.stats;
+    main.innerHTML = `
+      <div class="page-header"><h1>Admin Center</h1></div>
+
+      <div class="grid grid-4" style="margin-bottom:24px;">
+        ${statCard("Members", s.members)}
+        ${statCard("Active tasks", s.activeTasks)}
+        ${statCard("Overdue", s.overdueTasks, "var(--brick)")}
+        ${statCard("Completed this week", s.completedThisWeek, "var(--moss)")}
+      </div>
+      <div class="grid grid-4" style="margin-bottom:28px;">
+        ${statCard("Upcoming events", s.upcomingEvents)}
+      </div>
+
+      <div class="grid grid-2" style="align-items:start;margin-bottom:28px;">
+        <div class="card">
+          <h3 style="margin-top:0;">Team progress</h3>
+          ${overview.teamProgress.map(teamProgressRow).join("")}
+          <p class="muted" style="font-size:12px;margin-top:8px;">Based on tasks assigned to a whole team (not individually-assigned tasks).</p>
+        </div>
+        <div class="card">
+          <h3 style="margin-top:0;">Quick links</h3>
+          <div class="link-grid">
+            ${LINKS.map(l => `<a class="link-tile" href="${l.href}"><span class="icon">${l.icon}</span><span class="name">${l.name}</span></a>`).join("")}
+          </div>
+        </div>
+      </div>
+
+      <h3>Team management</h3>
+      ${dash.teams.map(teamManageCard).join("")}
+    `;
+
+    main.querySelectorAll(".team-edit-form").forEach(f => f.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      try {
+        await apiFetch("/teams/update", { method: "POST", body: { id: e.target.dataset.team, name: fd.get("name"), description: fd.get("description"), leaderId: fd.get("leaderId") || null } });
+        toast("Team saved");
+        await refresh();
+      } catch (err) { toast(err.message, true); }
+    }));
+    main.querySelectorAll("[data-remove-roster]").forEach(b => b.addEventListener("click", async () => {
+      try { await apiFetch("/members/remove-team", { method: "POST", body: { userId: b.dataset.removeRoster } }); toast("Removed from team"); await refresh(); }
+      catch (err) { toast(err.message, true); }
+    }));
+    main.querySelectorAll(".add-roster-select").forEach(sel => sel.addEventListener("change", async (e) => {
+      if (!e.target.value) return;
+      try { await apiFetch("/members/assign-team", { method: "POST", body: { userId: e.target.value, teamId: e.target.dataset.teamAdd } }); toast("Added to team"); await refresh(); }
+      catch (err) { toast(err.message, true); }
+    }));
+  }
+
+  async function refresh() {
+    [overview, dash] = await Promise.all([apiFetch("/admin/overview"), apiFetch("/dashboard")]);
+    render();
+  }
+
+  render();
+})();
+</script>
+</body>
+</html>

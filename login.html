@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unify Hub — Sign in</title>
+<link rel="stylesheet" href="/theme.css">
+<style>
+  body { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
+  .login-wrap { width: 100%; max-width: 400px; }
+  .login-brand { text-align: center; margin-bottom: 28px; }
+  .login-brand h1 { font-size: 28px; margin: 0 0 6px; }
+  .login-brand .dot { color: var(--coral); }
+  .login-brand p { color: var(--ink-soft); margin: 0; font-size: 13px; }
+  .error-box { background: rgba(168,91,79,0.1); color: var(--brick); padding: 10px 13px; border-radius: var(--radius-sm); font-size: 13px; margin-bottom: 14px; display: none; }
+</style>
+</head>
+<body>
+<div class="login-wrap">
+  <div class="login-brand">
+    <h1><span data-org-name>Unify Hub</span></h1>
+    <p>Sign in with your Member ID and PIN</p>
+  </div>
+  <div class="card">
+    <div class="error-box" id="error-box"></div>
+    <form id="login-form">
+      <div class="field">
+        <label>Member ID</label>
+        <input class="input" name="username" autocomplete="username" required placeholder="e.g. UH-005">
+      </div>
+      <div class="field">
+        <label>PIN</label>
+        <input class="input" name="password" type="password" autocomplete="current-password" required>
+      </div>
+      <button class="btn btn-block" type="submit" id="submit-btn">Sign in</button>
+    </form>
+  </div>
+  <p class="muted" style="text-align:center;margin-top:16px;font-size:12px;">First time here? Ask an admin to create your account.</p>
+</div>
+<script src="/js/app.js"></script>
+<script>
+(async function () {
+  applyTheme();
+  const me = await apiFetch("/account/me").catch(() => null);
+  if (me && me.user) { window.location.href = "/dashboard.html"; return; }
+
+  const form = document.getElementById("login-form");
+  const errorBox = document.getElementById("error-box");
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    errorBox.style.display = "none";
+    const btn = document.getElementById("submit-btn");
+    btn.disabled = true; btn.textContent = "Signing in…";
+    const fd = new FormData(form);
+    try {
+      await apiFetch("/account/login", { method: "POST", body: { username: fd.get("username"), password: fd.get("password") } });
+      window.location.href = "/dashboard.html";
+    } catch (err) {
+      errorBox.textContent = err.message || "Sign in failed";
+      errorBox.style.display = "block";
+      btn.disabled = false; btn.textContent = "Sign in";
+    }
+  });
+})();
+</script>
+</body>
+</html>
